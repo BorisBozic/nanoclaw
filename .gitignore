@@ -9,14 +9,23 @@ store/
 data/
 logs/
 
-# Groups - only track base structure and specific CLAUDE.md files
+# Groups - track CLAUDE.md for each group, ignore runtime data (logs, sessions)
 groups/*
 !groups/main/
 !groups/global/
+!groups/telegram_famsigma/
+!groups/telegram_solosigma/
+!groups/ios_boris/
 groups/main/*
 groups/global/*
+groups/telegram_famsigma/*
+groups/telegram_solosigma/*
+groups/ios_boris/*
 !groups/main/CLAUDE.md
 !groups/global/CLAUDE.md
+!groups/telegram_famsigma/CLAUDE.md
+!groups/telegram_solosigma/CLAUDE.md
+!groups/ios_boris/CLAUDE.md
 
 # Secrets
 *.keys.json

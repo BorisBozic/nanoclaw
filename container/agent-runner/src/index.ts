@@ -140,6 +140,46 @@ function getSessionSummary(sessionId: string, transcriptPath: string): string | 
 }
 
 /**
+ * PostToolUse hook — logs every tool invocation to an audit file.
+ */
+function createAuditHook(): HookCallback {
+  return async (input, _toolUseId, _context) => {
+    const auditFile = '/workspace/group/logs/tool-audit.jsonl';
+    const dir = path.dirname(auditFile);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+
+    const entry = {
+      timestamp: new Date().toISOString(),
+      tool: (input as Record<string, unknown>).tool_name || 'unknown',
+      session: (input as Record<string, unknown>).session_id || 'unknown',
+    };
+    fs.appendFileSync(auditFile, JSON.stringify(entry) + '\n');
+    return {};
+  };
+}
+
+/**
+ * PreToolUse hook — blocks writes outside allowed directories.
+ */
+function createWriteGuardHook(): HookCallback {
+  return async (input, _toolUseId, _context) => {
+    const toolInput = (input as Record<string, unknown>).tool_input as Record<string, unknown> | undefined;
+    const filePath = (toolInput?.file_path as string) || '';
+
+    if (
+      filePath.startsWith('/workspace/group/') ||
+      filePath.startsWith('/workspace/extra/') ||
+      filePath.startsWith('/home/node/.claude/')
+    ) {
+      return {};
+    }
+
+    log(`Blocked write to ${filePath} — outside allowed directories`);
+    return { decision: 'block' };
+  };
+}
+
+/**
  * Archive the full transcript to conversations/ before compaction.
  */
 function createPreCompactHook(assistantName?: string): HookCallback {
@@ -425,6 +465,8 @@ async function runQuery(
         },
       },
       hooks: {
+        PreToolUse: [{ matcher: 'Write|Edit', hooks: [createWriteGuardHook()] }],
+        PostToolUse: [{ matcher: '.*', hooks: [createAuditHook()] }],
         PreCompact: [{ hooks: [createPreCompactHook(containerInput.assistantName)] }],
       },
     }

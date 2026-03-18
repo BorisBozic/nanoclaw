@@ -157,6 +157,41 @@ function buildVolumeMounts(
       fs.cpSync(srcDir, dstDir, { recursive: true });
     }
   }
+
+  // Sync hooks from container/hooks/ into the group folder's .claude/hooks/
+  // and write hook config to the project-level settings.json.
+  // Claude Code reads hooks from the project .claude/settings.json (CWD),
+  // not the user-level ~/.claude/settings.json. The CWD inside the container
+  // is /workspace/group/, which maps to groups/{folder}/ on the host.
+  const hooksSrc = path.join(process.cwd(), 'container', 'hooks');
+  if (fs.existsSync(hooksSrc)) {
+    // Copy hook scripts into the group folder's .claude/hooks/
+    const projectClaudeDir = path.join(groupDir, '.claude');
+    const hooksDst = path.join(projectClaudeDir, 'hooks');
+    fs.mkdirSync(hooksDst, { recursive: true });
+    for (const hookFile of fs.readdirSync(hooksSrc)) {
+      const srcFile = path.join(hooksSrc, hookFile);
+      if (!fs.statSync(srcFile).isFile()) continue;
+      fs.cpSync(srcFile, path.join(hooksDst, hookFile));
+    }
+
+    // Write hooks config to project-level .claude/settings.json
+    const hooksConfigFile = path.join(hooksSrc, 'hooks.json');
+    if (fs.existsSync(hooksConfigFile)) {
+      const hooksConfig = JSON.parse(
+        fs.readFileSync(hooksConfigFile, 'utf-8'),
+      );
+      const projectSettingsFile = path.join(projectClaudeDir, 'settings.json');
+      const projectSettings = fs.existsSync(projectSettingsFile)
+        ? JSON.parse(fs.readFileSync(projectSettingsFile, 'utf-8'))
+        : {};
+      projectSettings.hooks = hooksConfig.hooks;
+      fs.writeFileSync(
+        projectSettingsFile,
+        JSON.stringify(projectSettings, null, 2) + '\n',
+      );
+    }
+  }
   mounts.push({
     hostPath: groupSessionsDir,
     containerPath: '/home/node/.claude',
