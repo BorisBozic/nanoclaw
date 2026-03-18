@@ -10,6 +10,7 @@ import {
   OnInboundMessage,
   RegisteredGroup,
 } from '../types.js';
+import { handleDataApi } from './ios-data-api.js';
 
 // Use dynamic import for ws since it's an ESM/CJS package
 let WebSocketServer: any;
@@ -60,10 +61,11 @@ export class IosChannel implements Channel {
     });
 
     return new Promise<void>((resolve) => {
-      this.server!.listen(this.port, () => {
-        logger.info({ port: this.port }, 'iOS channel listening');
-        console.log(`\n  iOS channel: http://localhost:${this.port}`);
-        console.log(`  WebSocket:   ws://localhost:${this.port}/ws\n`);
+      // Bind to 0.0.0.0 so the app can reach us over Tailscale / LAN
+      this.server!.listen(this.port, '0.0.0.0', () => {
+        logger.info({ port: this.port }, 'iOS channel listening on 0.0.0.0');
+        console.log(`\n  iOS channel: http://0.0.0.0:${this.port}`);
+        console.log(`  WebSocket:   ws://0.0.0.0:${this.port}/ws\n`);
         resolve();
       });
     });
@@ -89,6 +91,11 @@ export class IosChannel implements Channel {
 
     if (req.method === 'POST' && req.url === '/api/message') {
       this.handlePostMessage(req, res);
+      return;
+    }
+
+    // Data API: calendar, tasks
+    if (handleDataApi(req, res, this.token)) {
       return;
     }
 
@@ -204,6 +211,23 @@ export class IosChannel implements Channel {
           });
 
           logger.info({ jid }, 'iOS WebSocket message stored');
+
+          // Broadcast user message to OTHER connected clients for real-time sync
+          const echoPayload = JSON.stringify({
+            type: 'message',
+            text: msg.text,
+            from: 'user',
+            senderName: msg.senderName || 'iOS User',
+          });
+          for (const [clientJid, client] of this.clients.entries()) {
+            if (clientJid !== jid && client.ws.readyState === 1) {
+              try {
+                client.ws.send(echoPayload);
+              } catch {
+                // ignore
+              }
+            }
+          }
         }
       } catch (err) {
         logger.error({ err }, 'Failed to parse iOS WebSocket message');
@@ -225,17 +249,24 @@ export class IosChannel implements Channel {
   }
 
   async sendMessage(jid: string, text: string): Promise<void> {
-    const client = this.clients.get(jid);
-    if (!client || client.ws.readyState !== 1) {
-      logger.warn({ jid }, 'iOS client not connected, message not delivered');
-      return;
+    // Broadcast bot responses to ALL connected iOS clients so every
+    // device sees the reply in real time (not just the one that asked).
+    const payload = JSON.stringify({ type: 'message', text, from: 'assistant' });
+    let sent = 0;
+    for (const client of this.clients.values()) {
+      if (client.ws.readyState === 1) {
+        try {
+          client.ws.send(payload);
+          sent++;
+        } catch (err) {
+          logger.error({ jid: client.jid, err }, 'Failed to send iOS message');
+        }
+      }
     }
-
-    try {
-      client.ws.send(JSON.stringify({ type: 'message', text }));
-      logger.info({ jid, length: text.length }, 'iOS message sent');
-    } catch (err) {
-      logger.error({ jid, err }, 'Failed to send iOS message');
+    if (sent === 0) {
+      logger.warn({ jid }, 'No iOS clients connected, message not delivered');
+    } else {
+      logger.info({ jid, sent, length: text.length }, 'iOS message broadcast');
     }
   }
 
@@ -269,13 +300,16 @@ export class IosChannel implements Channel {
   }
 
   async setTyping(jid: string, isTyping: boolean): Promise<void> {
-    const client = this.clients.get(jid);
-    if (!client || client.ws.readyState !== 1) return;
-
-    try {
-      client.ws.send(JSON.stringify({ type: 'typing', isTyping }));
-    } catch {
-      // ignore
+    // Broadcast typing to ALL connected iOS clients
+    const payload = JSON.stringify({ type: 'typing', isTyping });
+    for (const client of this.clients.values()) {
+      if (client.ws.readyState === 1) {
+        try {
+          client.ws.send(payload);
+        } catch {
+          // ignore
+        }
+      }
     }
   }
 }
