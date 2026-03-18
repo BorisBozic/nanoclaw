@@ -13,13 +13,7 @@ import { getMessageHistory, getMessageHistoryAllIos } from '../db.js';
 
 const SIGMA_DATA = path.join(process.env.HOME || '/Users/fambot', 'sigma-data');
 const SCHEDULES_DIR = path.join(SIGMA_DATA, 'family', 'schedules');
-const TASKS_FILE = path.join(
-  process.env.HOME || '/Users/fambot',
-  'Projects',
-  'Sigma',
-  'SigmaApp',
-  'TASKS.md',
-);
+const TASKS_FILE = path.join(SIGMA_DATA, 'family', 'sigma-app-tasks.md');
 
 /**
  * Handle data API routes. Returns true if the request was handled.
