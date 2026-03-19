@@ -10,7 +10,7 @@ import {
   OnInboundMessage,
   RegisteredGroup,
 } from '../types.js';
-import { handleDataApi } from './ios-data-api.js';
+import { handleDataApi, watchTasksFile } from './ios-data-api.js';
 
 // Use dynamic import for ws since it's an ESM/CJS package
 let WebSocketServer: any;
@@ -38,6 +38,7 @@ export class IosChannel implements Channel {
   private port: number;
   private token: string;
   private opts: IosChannelOpts;
+  private stopTasksWatcher: (() => void) | null = null;
 
   constructor(port: number, token: string, opts: IosChannelOpts) {
     this.port = port;
@@ -58,6 +59,11 @@ export class IosChannel implements Channel {
 
     this.wss.on('connection', (ws: any, req: http.IncomingMessage) => {
       this.handleWsConnection(ws, req);
+    });
+
+    // Watch the tasks file and push changes to all connected clients
+    this.stopTasksWatcher = watchTasksFile((content) => {
+      this.broadcastToAll({ type: 'tasks_updated', content });
     });
 
     return new Promise<void>((resolve) => {
@@ -270,6 +276,20 @@ export class IosChannel implements Channel {
     }
   }
 
+  /** Broadcast a JSON payload to every connected iOS client. */
+  private broadcastToAll(payload: Record<string, unknown>): void {
+    const data = JSON.stringify(payload);
+    for (const client of this.clients.values()) {
+      if (client.ws.readyState === 1) {
+        try {
+          client.ws.send(data);
+        } catch {
+          // ignore individual send failures
+        }
+      }
+    }
+  }
+
   isConnected(): boolean {
     return this.server !== null;
   }
@@ -279,6 +299,11 @@ export class IosChannel implements Channel {
   }
 
   async disconnect(): Promise<void> {
+    if (this.stopTasksWatcher) {
+      this.stopTasksWatcher();
+      this.stopTasksWatcher = null;
+    }
+
     for (const client of this.clients.values()) {
       client.ws.close();
     }

@@ -15,6 +15,51 @@ const SIGMA_DATA = path.join(process.env.HOME || '/Users/fambot', 'sigma-data');
 const SCHEDULES_DIR = path.join(SIGMA_DATA, 'family', 'schedules');
 const TASKS_FILE = path.join(SIGMA_DATA, 'family', 'sigma-app-tasks.md');
 
+// Module-level broadcast callback, set by watchTasksFile
+let broadcastTasksChange: ((content: string) => void) | null = null;
+
+/**
+ * Start watching the tasks file for changes. Calls `onChanged` with the
+ * new file content whenever it's modified (debounced to 500ms).
+ * Returns a cleanup function.
+ */
+export function watchTasksFile(onChanged: (content: string) => void): () => void {
+  // Store the callback so the PUT handler can also trigger broadcasts
+  broadcastTasksChange = onChanged;
+
+  let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+  let lastContent = '';
+
+  try {
+    lastContent = fs.readFileSync(TASKS_FILE, 'utf-8');
+  } catch {
+    // file may not exist yet
+  }
+
+  const watcher = fs.watch(TASKS_FILE, () => {
+    if (debounceTimer) clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(() => {
+      try {
+        const content = fs.readFileSync(TASKS_FILE, 'utf-8');
+        if (content !== lastContent) {
+          lastContent = content;
+          onChanged(content);
+          logger.info('Tasks file changed, broadcasting update');
+        }
+      } catch {
+        // ignore read errors during rapid writes
+      }
+    }, 500);
+  });
+
+  logger.info({ path: TASKS_FILE }, 'Watching tasks file for changes');
+
+  return () => {
+    watcher.close();
+    if (debounceTimer) clearTimeout(debounceTimer);
+  };
+}
+
 /**
  * Handle data API routes. Returns true if the request was handled.
  */
@@ -255,6 +300,12 @@ function handlePutTasks(req: http.IncomingMessage, res: http.ServerResponse): vo
     try {
       fs.writeFileSync(TASKS_FILE, body, 'utf-8');
       logger.info('Tasks file updated via API');
+
+      // Broadcast to other connected clients so they get the update in real-time
+      if (broadcastTasksChange) {
+        broadcastTasksChange(body);
+      }
+
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ status: 'saved' }));
     } catch (err) {
