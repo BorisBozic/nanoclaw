@@ -1,8 +1,8 @@
 /**
  * Data API endpoints for the iOS channel.
  *
- * Serves family data (calendar, tasks) over HTTP so the app works
- * on real devices over LAN — not just in Simulator with filesystem access.
+ * Serves family data (calendar, initiatives, ideas/nits) over HTTP so the app
+ * works on real devices over LAN — not just in Simulator with filesystem access.
  */
 
 import http from 'http';
@@ -14,71 +14,204 @@ import { getMessageHistory, getMessageHistoryAllIos } from '../db.js';
 const SIGMA_DATA = path.join(process.env.HOME || '/Users/fambot', 'sigma-data');
 const SIGMA_REPO = path.join(process.env.HOME || '/Users/fambot', 'Projects', 'Sigma');
 const SCHEDULES_DIR = path.join(SIGMA_DATA, 'family', 'schedules');
-const INITIATIVES_FILE = path.join(SIGMA_REPO, 'initiatives.md');
+const INITIATIVES_DIR = path.join(SIGMA_REPO, 'initiatives');
 const IDEAS_NITS_FILE = path.join(SIGMA_REPO, 'ideas-and-nits.md');
 
-// Module-level broadcast callbacks, set by watchFiles
-let broadcastInitiativesChange: ((content: string) => void) | null = null;
-let broadcastIdeasNitsChange: ((content: string) => void) | null = null;
+const STATUSES = ['doing', 'next', 'later', 'done', 'cancelled'] as const;
+
+// Module-level broadcast callback
+let broadcastChange: ((fileType: string) => void) | null = null;
 
 /**
- * Watch a file for changes. Calls `onChanged` with the new content (debounced 500ms).
- */
-function watchFile(
-  filePath: string,
-  fileType: string,
-  onChanged: (content: string, fileType: string) => void,
-): () => void {
-  let debounceTimer: ReturnType<typeof setTimeout> | null = null;
-  let lastContent = '';
-
-  try {
-    lastContent = fs.readFileSync(filePath, 'utf-8');
-  } catch {
-    // file may not exist yet
-  }
-
-  const watcher = fs.watch(filePath, () => {
-    if (debounceTimer) clearTimeout(debounceTimer);
-    debounceTimer = setTimeout(() => {
-      try {
-        const content = fs.readFileSync(filePath, 'utf-8');
-        if (content !== lastContent) {
-          lastContent = content;
-          onChanged(content, fileType);
-          logger.info({ fileType }, 'File changed, broadcasting update');
-        }
-      } catch {
-        // ignore read errors during rapid writes
-      }
-    }, 500);
-  });
-
-  logger.info({ path: filePath, fileType }, 'Watching file for changes');
-
-  return () => {
-    watcher.close();
-    if (debounceTimer) clearTimeout(debounceTimer);
-  };
-}
-
-/**
- * Start watching both initiatives and ideas-and-nits files.
+ * Watch the initiatives folder tree and ideas-and-nits file for changes.
  * Returns a cleanup function.
  */
 export function watchWorkFiles(
   onChanged: (content: string, fileType: string) => void,
 ): () => void {
-  broadcastInitiativesChange = (content) => onChanged(content, 'initiatives');
-  broadcastIdeasNitsChange = (content) => onChanged(content, 'ideas-and-nits');
+  broadcastChange = (fileType: string) => {
+    if (fileType === 'initiatives') {
+      const payload = JSON.stringify(scanInitiatives());
+      onChanged(payload, 'initiatives');
+    } else {
+      try {
+        const content = fs.readFileSync(IDEAS_NITS_FILE, 'utf-8');
+        onChanged(content, 'ideas-and-nits');
+      } catch {
+        // ignore
+      }
+    }
+  };
 
-  const stopInit = watchFile(INITIATIVES_FILE, 'initiatives', onChanged);
-  const stopIN = watchFile(IDEAS_NITS_FILE, 'ideas-and-nits', onChanged);
+  const watchers: fs.FSWatcher[] = [];
+  let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+
+  // Watch each status folder
+  for (const status of STATUSES) {
+    const dir = path.join(INITIATIVES_DIR, status);
+    try {
+      fs.mkdirSync(dir, { recursive: true });
+      const watcher = fs.watch(dir, () => {
+        if (debounceTimer) clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(() => {
+          const payload = JSON.stringify(scanInitiatives());
+          onChanged(payload, 'initiatives');
+          logger.info('Initiative folder changed, broadcasting update');
+        }, 500);
+      });
+      watchers.push(watcher);
+    } catch {
+      logger.warn({ dir }, 'Could not watch initiative folder');
+    }
+  }
+
+  // Also watch individual .md files within each folder for content changes
+  for (const status of STATUSES) {
+    const dir = path.join(INITIATIVES_DIR, status);
+    try {
+      const files = fs.readdirSync(dir).filter((f) => f.endsWith('.md'));
+      for (const file of files) {
+        const filePath = path.join(dir, file);
+        const watcher = fs.watch(filePath, () => {
+          if (debounceTimer) clearTimeout(debounceTimer);
+          debounceTimer = setTimeout(() => {
+            const payload = JSON.stringify(scanInitiatives());
+            onChanged(payload, 'initiatives');
+            logger.info({ file }, 'Initiative file changed, broadcasting update');
+          }, 500);
+        });
+        watchers.push(watcher);
+      }
+    } catch {
+      // folder might not exist yet
+    }
+  }
+
+  // Watch ideas-and-nits file
+  let inDebounce: ReturnType<typeof setTimeout> | null = null;
+  let lastINContent = '';
+  try {
+    lastINContent = fs.readFileSync(IDEAS_NITS_FILE, 'utf-8');
+  } catch {
+    // file may not exist
+  }
+  try {
+    const inWatcher = fs.watch(IDEAS_NITS_FILE, () => {
+      if (inDebounce) clearTimeout(inDebounce);
+      inDebounce = setTimeout(() => {
+        try {
+          const content = fs.readFileSync(IDEAS_NITS_FILE, 'utf-8');
+          if (content !== lastINContent) {
+            lastINContent = content;
+            onChanged(content, 'ideas-and-nits');
+            logger.info('Ideas/nits file changed, broadcasting update');
+          }
+        } catch {
+          // ignore
+        }
+      }, 500);
+    });
+    watchers.push(inWatcher);
+  } catch {
+    logger.warn('Could not watch ideas-and-nits file');
+  }
+
+  logger.info('Watching initiatives folder and ideas-and-nits file');
 
   return () => {
-    stopInit();
-    stopIN();
+    for (const w of watchers) w.close();
+    if (debounceTimer) clearTimeout(debounceTimer);
+    if (inDebounce) clearTimeout(inDebounce);
   };
+}
+
+// MARK: - Initiatives folder scanner
+
+interface InitiativeData {
+  slug: string;
+  status: string;
+  title: string;
+  content: string; // Full markdown content of the file
+  isReady: boolean;
+  steps: { title: string; isDone: boolean; phase: string | null }[];
+  hasLearnings: boolean;
+}
+
+/**
+ * Scan the initiatives/ folder structure and return all initiatives
+ * grouped by status.
+ */
+function scanInitiatives(): Record<string, InitiativeData[]> {
+  const result: Record<string, InitiativeData[]> = {};
+
+  for (const status of STATUSES) {
+    const dir = path.join(INITIATIVES_DIR, status);
+    const initiatives: InitiativeData[] = [];
+
+    try {
+      const files = fs
+        .readdirSync(dir)
+        .filter((f) => f.endsWith('.md'))
+        .sort();
+
+      for (const file of files) {
+        const filePath = path.join(dir, file);
+        const content = fs.readFileSync(filePath, 'utf-8');
+        const slug = file.replace(/\.md$/, '');
+
+        // Extract title from first # heading
+        const titleMatch = content.match(/^#\s+(.+)$/m);
+        const title = titleMatch ? titleMatch[1] : slug;
+
+        // Check for [ready] marker
+        const isReady = content.includes('[ready]');
+
+        // Check for learnings section
+        const hasLearnings = /^##\s+Learnings/m.test(content);
+
+        // Extract steps with phase info
+        const steps = parseSteps(content);
+
+        initiatives.push({ slug, status, title, content, isReady, steps, hasLearnings });
+      }
+    } catch {
+      // folder might not exist
+    }
+
+    result[status] = initiatives;
+  }
+
+  return result;
+}
+
+/**
+ * Parse steps from initiative markdown, tracking which phase they belong to.
+ */
+function parseSteps(content: string): { title: string; isDone: boolean; phase: string | null }[] {
+  const lines = content.split('\n');
+  const steps: { title: string; isDone: boolean; phase: string | null }[] = [];
+  let currentPhase: string | null = null;
+
+  for (const line of lines) {
+    // Phase heading: **Phase N: ...**
+    const phaseMatch = line.match(/^\*\*(.+?)\*\*\s*$/);
+    if (phaseMatch) {
+      currentPhase = phaseMatch[1];
+      continue;
+    }
+
+    // Step: - [ ] or - [x]
+    const stepMatch = line.match(/^-\s+\[([ x])\]\s+(.+)$/);
+    if (stepMatch) {
+      steps.push({
+        isDone: stepMatch[1] === 'x',
+        title: stepMatch[2],
+        phase: currentPhase,
+      });
+    }
+  }
+
+  return steps;
 }
 
 /**
@@ -102,7 +235,12 @@ export function handleDataApi(
   }
 
   if (req.method === 'GET' && url === '/api/initiatives') {
-    authGuard(req, res, token, () => handleGetFile(res, INITIATIVES_FILE));
+    authGuard(req, res, token, () => handleGetInitiatives(res));
+    return true;
+  }
+
+  if (req.method === 'GET' && url.startsWith('/api/initiatives/')) {
+    authGuard(req, res, token, () => handleGetInitiativeFile(req, res));
     return true;
   }
 
@@ -116,9 +254,9 @@ export function handleDataApi(
     return true;
   }
 
-  // Legacy route — still support old combined endpoint for backward compat
-  if (req.method === 'GET' && url === '/api/tasks') {
-    authGuard(req, res, token, () => handleGetFile(res, INITIATIVES_FILE));
+  // Move initiative between statuses: POST /api/initiatives/move
+  if (req.method === 'POST' && url === '/api/initiatives/move') {
+    authGuard(req, res, token, () => handleMoveInitiative(req, res));
     return true;
   }
 
@@ -143,12 +281,94 @@ function authGuard(
   handler();
 }
 
+// MARK: - Initiatives
+
+function handleGetInitiatives(res: http.ServerResponse): void {
+  try {
+    const data = scanInitiatives();
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(data));
+  } catch (err) {
+    logger.error({ err }, 'Failed to scan initiatives');
+    res.writeHead(500, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'Failed to scan initiatives' }));
+  }
+}
+
+function handleGetInitiativeFile(req: http.IncomingMessage, res: http.ServerResponse): void {
+  try {
+    // URL: /api/initiatives/{status}/{slug}
+    const parts = (req.url || '').replace('/api/initiatives/', '').split('/');
+    if (parts.length !== 2) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Expected /api/initiatives/{status}/{slug}' }));
+      return;
+    }
+    const [status, slug] = parts;
+    const filePath = path.join(INITIATIVES_DIR, status, `${slug}.md`);
+
+    if (!fs.existsSync(filePath)) {
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Initiative not found' }));
+      return;
+    }
+
+    const content = fs.readFileSync(filePath, 'utf-8');
+    res.writeHead(200, { 'Content-Type': 'text/markdown' });
+    res.end(content);
+  } catch (err) {
+    logger.error({ err }, 'Failed to read initiative file');
+    res.writeHead(500, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'Failed to read initiative' }));
+  }
+}
+
+function handleMoveInitiative(req: http.IncomingMessage, res: http.ServerResponse): void {
+  let body = '';
+  req.on('data', (chunk) => {
+    body += chunk;
+  });
+  req.on('end', () => {
+    try {
+      const { slug, from, to } = JSON.parse(body);
+      if (!slug || !from || !to) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Missing slug, from, or to' }));
+        return;
+      }
+
+      const srcPath = path.join(INITIATIVES_DIR, from, `${slug}.md`);
+      const dstPath = path.join(INITIATIVES_DIR, to, `${slug}.md`);
+
+      if (!fs.existsSync(srcPath)) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: `Initiative ${slug} not found in ${from}` }));
+        return;
+      }
+
+      fs.mkdirSync(path.join(INITIATIVES_DIR, to), { recursive: true });
+      fs.renameSync(srcPath, dstPath);
+      logger.info({ slug, from, to }, 'Initiative moved');
+
+      // Broadcast change
+      if (broadcastChange) broadcastChange('initiatives');
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ status: 'moved' }));
+    } catch (err) {
+      logger.error({ err }, 'Failed to move initiative');
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Failed to move initiative' }));
+    }
+  });
+}
+
 // MARK: - Calendar
 
 interface CalendarEvent {
   id: string;
   summary: string;
-  startDate: string; // ISO string
+  startDate: string;
   endDate: string | null;
   isAllDay: boolean;
   description: string | null;
@@ -166,7 +386,6 @@ function handleGetCalendar(res: http.ServerResponse): void {
       logger.debug({ file, count: events.length }, 'Parsed ICS file');
     }
 
-    // Sort by start date
     allEvents.sort((a, b) => a.startDate.localeCompare(b.startDate));
 
     res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -178,12 +397,7 @@ function handleGetCalendar(res: http.ServerResponse): void {
   }
 }
 
-/**
- * Lightweight ICS parser — same logic as the Swift ICSParser but in TypeScript.
- * Handles School Bytes' VEVENT format.
- */
 function parseICS(content: string): CalendarEvent[] {
-  // Unfold continuation lines (RFC 5545)
   const unfolded = content
     .replace(/\r\n /g, '')
     .replace(/\r\n\t/g, '')
@@ -254,13 +468,11 @@ function parseICSDate(raw: string): Date | null {
   const value = raw.slice(colonIdx + 1);
 
   if (raw.includes('VALUE=DATE')) {
-    // All-day: 20260318 → local midnight
     const y = parseInt(value.slice(0, 4));
     const m = parseInt(value.slice(4, 6)) - 1;
     const d = parseInt(value.slice(6, 8));
     return new Date(y, m, d);
   } else if (value.endsWith('Z')) {
-    // UTC: 20260318T090000Z
     const y = parseInt(value.slice(0, 4));
     const m = parseInt(value.slice(4, 6)) - 1;
     const d = parseInt(value.slice(6, 8));
@@ -269,7 +481,6 @@ function parseICSDate(raw: string): Date | null {
     const s = parseInt(value.slice(13, 15));
     return new Date(Date.UTC(y, m, d, h, min, s));
   } else {
-    // Local: 20260318T090000
     const y = parseInt(value.slice(0, 4));
     const m = parseInt(value.slice(4, 6)) - 1;
     const d = parseInt(value.slice(6, 8));
@@ -288,10 +499,8 @@ function handleGetMessages(req: http.IncomingMessage, res: http.ServerResponse):
     const jid = url.searchParams.get('jid');
     const limit = parseInt(url.searchParams.get('limit') || '200', 10);
 
-    // If no JID specified, return all iOS messages (unified view)
     const messages = jid ? getMessageHistory(jid, limit) : getMessageHistoryAllIos(limit);
 
-    // Strip the @Sigma prefix from user messages for display
     const cleaned = messages.map((m) => ({
       id: m.id,
       sender: m.sender_name,
@@ -309,7 +518,7 @@ function handleGetMessages(req: http.IncomingMessage, res: http.ServerResponse):
   }
 }
 
-// MARK: - File read/write
+// MARK: - File read/write (ideas-and-nits)
 
 function handleGetFile(res: http.ServerResponse, filePath: string): void {
   try {
@@ -338,12 +547,7 @@ function handlePutFile(
       fs.writeFileSync(filePath, body, 'utf-8');
       logger.info({ fileType }, 'File updated via API');
 
-      // Broadcast to other connected clients
-      const broadcast =
-        fileType === 'initiatives' ? broadcastInitiativesChange : broadcastIdeasNitsChange;
-      if (broadcast) {
-        broadcast(body);
-      }
+      if (broadcastChange) broadcastChange(fileType);
 
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ status: 'saved' }));
