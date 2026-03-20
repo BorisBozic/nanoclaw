@@ -7,7 +7,7 @@
  */
 
 import fs from 'fs';
-import { ApnsClient, Notification, Errors, ApnsError } from 'apns2';
+import { ApnsClient, Notification, Errors, ApnsError, Host } from 'apns2';
 import { readEnvFile } from './env.js';
 import { getAllDeviceTokens, removeDeviceToken } from './db.js';
 import { logger } from './logger.js';
@@ -53,16 +53,14 @@ function getClient(environment: string): ApnsClient | null {
   const config = loadConfig();
   if (!config) return null;
 
-  const signingKey = fs.readFileSync(config.keyPath);
+  const signingKey = fs.readFileSync(config.keyPath, 'utf-8');
 
   const client = new ApnsClient({
     team: config.teamId,
     keyId: config.keyId,
     signingKey,
     defaultTopic: BUNDLE_ID,
-    host: isProduction
-      ? 'https://api.push.apple.com'
-      : 'https://api.sandbox.push.apple.com',
+    host: isProduction ? Host.production : Host.development,
   });
 
   // Cache it
