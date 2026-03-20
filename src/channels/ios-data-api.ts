@@ -9,7 +9,9 @@ import http from 'http';
 import fs from 'fs';
 import path from 'path';
 import { logger } from '../logger.js';
-import { getMessageHistory, getMessageHistoryAllIos } from '../db.js';
+import { getMessageHistory, getMessageHistoryAllIos, upsertDeviceToken } from '../db.js';
+import { runDailyNudge } from '../daily-nudge.js';
+import { sendPushToAll } from '../apns.js';
 
 const SIGMA_DATA = path.join(process.env.HOME || '/Users/fambot', 'sigma-data');
 const SIGMA_REPO = path.join(process.env.HOME || '/Users/fambot', 'Projects', 'Sigma');
@@ -290,6 +292,18 @@ export function handleDataApi(
     return true;
   }
 
+  // Register APNs device token: POST /api/device-token
+  if (req.method === 'POST' && url === '/api/device-token') {
+    authGuard(req, res, token, () => handleRegisterDeviceToken(req, res));
+    return true;
+  }
+
+  // Test push endpoint: POST /api/push/test
+  if (req.method === 'POST' && url === '/api/push/test') {
+    authGuard(req, res, token, () => handleTestPush(req, res));
+    return true;
+  }
+
   return false;
 }
 
@@ -407,6 +421,73 @@ function handleMoveInitiative(req: http.IncomingMessage, res: http.ServerRespons
       logger.error({ err }, 'Failed to move initiative');
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'Failed to move initiative' }));
+    }
+  });
+}
+
+// MARK: - Device Token Registration
+
+function handleRegisterDeviceToken(req: http.IncomingMessage, res: http.ServerResponse): void {
+  let body = '';
+  req.on('data', (chunk) => {
+    body += chunk;
+  });
+  req.on('end', () => {
+    try {
+      const { deviceId, token, environment } = JSON.parse(body);
+      if (!deviceId || !token) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Missing deviceId or token' }));
+        return;
+      }
+
+      upsertDeviceToken(deviceId, token, environment || 'production');
+      logger.info({ deviceId, environment: environment || 'production' }, 'Device token registered');
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true }));
+    } catch (err) {
+      logger.error({ err }, 'Failed to register device token');
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Failed to register device token' }));
+    }
+  });
+}
+
+// MARK: - Test Push
+
+function handleTestPush(req: http.IncomingMessage, res: http.ServerResponse): void {
+  let body = '';
+  req.on('data', (chunk) => {
+    body += chunk;
+  });
+  req.on('end', async () => {
+    try {
+      let title: string | undefined;
+      let bodyText: string | undefined;
+
+      if (body.trim()) {
+        const parsed = JSON.parse(body);
+        title = parsed.title;
+        bodyText = parsed.body;
+      }
+
+      let sent: number;
+      if (title && bodyText) {
+        // Custom message
+        sent = await sendPushToAll(title, bodyText);
+      } else {
+        // Default: run the daily nudge content
+        const result = await runDailyNudge();
+        sent = result.sent;
+      }
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true, sent }));
+    } catch (err) {
+      logger.error({ err }, 'Failed to send test push');
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Failed to send test push' }));
     }
   });
 }

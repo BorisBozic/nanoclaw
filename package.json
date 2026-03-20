@@ -21,6 +21,7 @@
   "dependencies": {
     "@types/ws": "^8.18.1",
     "@whiskeysockets/baileys": "^7.0.0-rc.9",
+    "apns2": "^12.2.0",
     "better-sqlite3": "^11.8.1",
     "cron-parser": "^5.5.0",
     "grammy": "^1.39.3",

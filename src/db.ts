@@ -65,6 +65,13 @@ function createSchema(database: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_task_run_logs ON task_run_logs(task_id, run_at);
 
+    CREATE TABLE IF NOT EXISTS device_tokens (
+      device_id TEXT PRIMARY KEY,
+      apns_token TEXT NOT NULL,
+      environment TEXT NOT NULL DEFAULT 'production',
+      registered_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
     CREATE TABLE IF NOT EXISTS router_state (
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL
@@ -672,6 +679,42 @@ export function getAllRegisteredGroups(): Record<string, RegisteredGroup> {
     };
   }
   return result;
+}
+
+// --- Device token accessors ---
+
+export interface DeviceToken {
+  device_id: string;
+  apns_token: string;
+  environment: string;
+  registered_at: string;
+  updated_at: string;
+}
+
+export function upsertDeviceToken(
+  deviceId: string,
+  token: string,
+  environment: string,
+): void {
+  const now = new Date().toISOString();
+  db.prepare(
+    `INSERT INTO device_tokens (device_id, apns_token, environment, registered_at, updated_at)
+     VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT(device_id) DO UPDATE SET
+       apns_token = excluded.apns_token,
+       environment = excluded.environment,
+       updated_at = excluded.updated_at`,
+  ).run(deviceId, token, environment, now, now);
+}
+
+export function getAllDeviceTokens(): DeviceToken[] {
+  return db
+    .prepare('SELECT * FROM device_tokens')
+    .all() as DeviceToken[];
+}
+
+export function removeDeviceToken(deviceId: string): void {
+  db.prepare('DELETE FROM device_tokens WHERE device_id = ?').run(deviceId);
 }
 
 // --- JSON migration ---
