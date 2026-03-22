@@ -6,7 +6,7 @@ disable-model-invocation: true
 
 # Remind
 
-Set a one-time reminder for the user. This skill is user-invoked only — Sigma should never trigger it automatically.
+Set a one-time reminder for the user. This skill is user-invoked only — Pip should never trigger it automatically.
 
 ## How it works
 
