@@ -5,6 +5,9 @@
  * family calendar events. Polls for changes using ctag dirty-checking.
  */
 
+import fs from 'fs';
+import path from 'path';
+import os from 'os';
 import { DAVClient, DAVCalendar, DAVObject } from 'tsdav';
 import { readEnvFile } from './env.js';
 import { logger } from './logger.js';
@@ -19,17 +22,32 @@ interface ICloudConfig {
   calendarNames: string[];
 }
 
-function loadConfig(): ICloudConfig | null {
-  const env = readEnvFile(['ICLOUD_APPLE_ID', 'ICLOUD_APP_PASSWORD', 'ICLOUD_CALENDAR_NAMES']);
+const CREDS_PATH = path.join(os.homedir(), '.config', 'nanoclaw', 'icloud-caldav', 'credentials.json');
 
-  if (!env.ICLOUD_APPLE_ID || !env.ICLOUD_APP_PASSWORD) {
-    logger.warn('iCloud CalDAV not configured — missing ICLOUD_APPLE_ID or ICLOUD_APP_PASSWORD in .env');
+function loadConfig(): ICloudConfig | null {
+  // Read credentials from ~/.config/nanoclaw/icloud-caldav/credentials.json
+  let appleId: string | undefined;
+  let appPassword: string | undefined;
+
+  try {
+    const creds = JSON.parse(fs.readFileSync(CREDS_PATH, 'utf-8'));
+    appleId = creds.appleId;
+    appPassword = creds.appPassword;
+  } catch {
+    logger.warn({ path: CREDS_PATH }, 'iCloud CalDAV credentials file not found');
+  }
+
+  if (!appleId || !appPassword) {
+    logger.warn('iCloud CalDAV not configured — missing credentials');
     return null;
   }
 
+  // Calendar names still from .env (not sensitive)
+  const env = readEnvFile(['ICLOUD_CALENDAR_NAMES']);
+
   return {
-    appleId: env.ICLOUD_APPLE_ID,
-    appPassword: env.ICLOUD_APP_PASSWORD,
+    appleId,
+    appPassword,
     calendarNames: env.ICLOUD_CALENDAR_NAMES
       ? env.ICLOUD_CALENDAR_NAMES.split(',').map(n => n.trim())
       : [],
@@ -64,11 +82,12 @@ async function ensureClient(): Promise<DAVClient | null> {
 
     // Filter to configured calendar names if specified
     if (config.calendarNames.length > 0) {
-      calendars = calendars.filter(c =>
-        config.calendarNames.some(name =>
-          String(c.displayName || '').toLowerCase() === name.toLowerCase(),
-        ),
-      );
+      calendars = calendars.filter(c => {
+        const displayName = String(c.displayName || '').toLowerCase().trim();
+        return config.calendarNames.some(name =>
+          displayName.startsWith(name.toLowerCase()),
+        );
+      });
       logger.info(
         { filtered: calendars.map(c => c.displayName) },
         'Filtered to configured calendars',
@@ -221,4 +240,64 @@ export function resetICloudClient(): void {
   client = null;
   calendars = [];
   initialized = false;
+}
+
+// MARK: - Background Polling
+
+const POLL_INTERVAL_MS = 60_000; // 60 seconds
+let storedCtags: Map<string, string> = new Map();
+let pollTimer: ReturnType<typeof setInterval> | null = null;
+let onChangeCallback: (() => void) | null = null;
+
+/**
+ * Start background polling for calendar changes.
+ * Checks ctag every 60 seconds — if changed, calls the callback.
+ */
+export function startICloudPolling(onChange?: () => void): void {
+  if (pollTimer) return; // already polling
+
+  onChangeCallback = onChange || null;
+
+  pollTimer = setInterval(async () => {
+    try {
+      const davClient = await ensureClient();
+      if (!davClient) return;
+
+      let changed = false;
+
+      for (const calendar of calendars) {
+        // Re-fetch calendar metadata to get current ctag
+        const refreshed = await davClient.fetchCalendars();
+        const match = refreshed.find(c => c.url === calendar.url);
+        if (!match) continue;
+
+        const currentCtag = String((match as Record<string, unknown>).ctag || '');
+        const storedCtag = storedCtags.get(calendar.url || '') || '';
+
+        if (currentCtag && currentCtag !== storedCtag) {
+          storedCtags.set(calendar.url || '', currentCtag);
+          changed = true;
+          logger.info({ calendar: calendar.displayName }, 'iCloud calendar changed (ctag updated)');
+        }
+      }
+
+      if (changed && onChangeCallback) {
+        onChangeCallback();
+      }
+    } catch (err) {
+      logger.debug({ err }, 'iCloud poll check failed (will retry)');
+    }
+  }, POLL_INTERVAL_MS);
+
+  logger.info({ intervalMs: POLL_INTERVAL_MS }, 'iCloud CalDAV polling started');
+}
+
+/**
+ * Stop background polling.
+ */
+export function stopICloudPolling(): void {
+  if (pollTimer) {
+    clearInterval(pollTimer);
+    pollTimer = null;
+  }
 }

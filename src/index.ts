@@ -60,6 +60,7 @@ import {
 } from './sender-allowlist.js';
 import { startSchedulerLoop } from './task-scheduler.js';
 import { startDailyNudgeCron } from './daily-nudge.js';
+import { startICloudPolling } from './icloud-calendar.js';
 import { Channel, NewMessage, RegisteredGroup } from './types.js';
 import { logger } from './logger.js';
 
@@ -629,6 +630,9 @@ async function main(): Promise<void> {
     },
   });
   startDailyNudgeCron();
+  startICloudPolling(() => {
+    logger.info('iCloud calendar changed — clients will see updates on next fetch');
+  });
   startIpcWatcher({
     sendMessage: (jid, text) => {
       const channel = findChannel(channels, jid);
