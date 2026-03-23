@@ -19,9 +19,8 @@ Adapted from Compound Engineering's ce:brainstorm pattern.
 
 ### Phase 1: Context Gathering
 
-1. Read the initiatives file at `/workspace/extra/family-docs/sigma-app-tasks.md`
-2. Check if this relates to an existing initiative — if so, read its current plan and steps
-3. Read any relevant family docs (MOC.md first, then specific files)
+1. Read any relevant family docs (`/workspace/extra/family-docs/MOC.md` first, then specific files)
+2. Check workspace for any context Boris has shared about this initiative
 
 ### Phase 2: Collaborative Dialogue
 
@@ -67,5 +66,5 @@ Ask Boris what's next:
 - **Stay focused on WHAT, not HOW** — implementation details belong in the plan
 - **Ask one question at a time** — don't overwhelm
 - **Apply YAGNI** — prefer simpler approaches
-- **Write back to the initiative** — the initiatives file is the single source of truth
+- **Write your findings** to the workspace so Boris can review
 - **NEVER CODE** — just explore and document decisions

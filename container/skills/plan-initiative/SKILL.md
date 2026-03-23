@@ -15,15 +15,14 @@ Adapted from Compound Engineering's ce:plan pattern.
 
 **If empty, ask Boris:** "Which initiative should we plan? I'll check the current list."
 
-Then read `/workspace/extra/family-docs/sigma-app-tasks.md` and show the initiatives in Doing/Next.
+Ask Boris which initiative to plan — initiatives are managed externally via the FamBot app.
 
 ## Execution Flow
 
 ### Phase 1: Gather Context
 
-1. Read the initiatives file
-2. Find the target initiative and read its current plan/description
-3. Read any relevant family docs or code referenced in the plan
+1. Ask Boris for context on the initiative if not provided in $ARGUMENTS
+2. Read any relevant family docs (`/workspace/extra/family-docs/MOC.md` first)
 4. If there's no brainstorm text yet, suggest running `/brainstorm` first
 
 ### Phase 2: Research
@@ -67,4 +66,4 @@ Ask Boris:
 - **Right-size steps** — each step = one working session, not one line of code
 - **Reference existing patterns** — if NanoClaw already does something similar, say so
 - **Flag risks** — highlight anything that could block or surprise us
-- **Write back to the initiative** — the initiatives file is the single source of truth
+- **Share your plan** with Boris so he can review and iterate

@@ -15,17 +15,16 @@ Adapted from Compound Engineering's ce:work pattern.
 
 **If empty, ask Boris:** "Which initiative should we work on?"
 
-Then read `/workspace/extra/family-docs/sigma-app-tasks.md` and show initiatives marked `[ready]`.
+Ask Boris which initiative to work on — initiatives are managed externally via the FamBot app.
 
 ## Execution Flow
 
 ### Phase 1: Load the Plan
 
-1. Read the initiatives file
-2. Find the target initiative
-3. Verify it has `[ready]` tag and steps defined
-4. If not ready, suggest running `/plan-initiative` first
-5. Show Boris the plan and steps, confirm we're aligned
+1. Get the plan from Boris (he'll share the context or paste it)
+2. Verify it has steps defined
+3. If not planned, suggest running `/plan-initiative` first
+4. Show Boris the plan and steps, confirm we're aligned
 
 ### Phase 2: Work Through Steps
 
@@ -56,4 +55,4 @@ When all steps are checked:
 - **Check in with Boris** — he wants to understand, not just receive
 - **Update the file as you go** — check off steps immediately, don't batch
 - **If stuck, say so** — don't spin. Flag the blocker and discuss.
-- **Write back to the initiative** — the initiatives file is the single source of truth
+- **Share progress** with Boris as you complete each step

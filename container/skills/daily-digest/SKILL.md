@@ -9,8 +9,8 @@ Compose a morning summary for the family. This skill is designed to run as a sch
 
 ## Steps
 
-1. Read `/workspace/extra/family-docs/family-facts.md` for family context (birthdays, allergies, preferences)
-2. Read `/workspace/extra/family-docs/schedules/` for school schedules, activities, and appointments
+1. Read `/workspace/extra/family-docs/family-members.md` for family context (birthdays, allergies, preferences)
+2. Read `/workspace/extra/family-docs/school/MOC.md` for school context, `/workspace/extra/family-docs/health/MOC.md` for health reminders
 3. Check today's date and day of week
 4. Compose a warm, concise morning message that includes:
    - Day and date
