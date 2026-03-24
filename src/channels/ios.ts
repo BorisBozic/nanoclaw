@@ -78,16 +78,9 @@ export class IosChannel implements Channel {
   }
 
   private handleHttp(req: http.IncomingMessage, res: http.ServerResponse): void {
-    // CORS headers for local development
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-
-    if (req.method === 'OPTIONS') {
-      res.writeHead(204);
-      res.end();
-      return;
-    }
+    // No CORS headers — FamBot is a native app making direct HTTP requests,
+    // not a browser. Removing wildcard CORS prevents cross-origin exfiltration
+    // from malicious websites on the home network.
 
     if (req.method === 'GET' && req.url === '/api/health') {
       res.writeHead(200, { 'Content-Type': 'application/json' });

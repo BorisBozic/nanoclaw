@@ -20,6 +20,16 @@ const IDEAS_NITS_FILE = path.join(SIGMA_REPO, 'ideas-and-nits.md');
 
 const STATUSES = ['doing', 'next', 'later', 'done', 'cancelled'] as const;
 
+/** Validate a slug or status parameter to prevent path traversal. */
+function isSafePathSegment(value: string): boolean {
+  return /^[a-zA-Z0-9_-]+$/.test(value);
+}
+
+/** Validate that a status value is one of the known statuses. */
+function isValidStatus(value: string): value is (typeof STATUSES)[number] {
+  return (STATUSES as readonly string[]).includes(value);
+}
+
 // Module-level broadcast callback
 let broadcastChange: ((fileType: string) => void) | null = null;
 
@@ -375,6 +385,11 @@ function handleGetInitiativeFile(req: http.IncomingMessage, res: http.ServerResp
       return;
     }
     const [status, slug] = parts;
+    if (!isValidStatus(status) || !isSafePathSegment(slug)) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Invalid status or slug' }));
+      return;
+    }
     const filePath = resolveInitiativePath(status, slug);
 
     if (!filePath) {
@@ -421,6 +436,12 @@ function handleCreateInitiative(req: http.IncomingMessage, res: http.ServerRespo
       }
 
       const targetStatus = status || 'next';
+      if (!isSafePathSegment(slug) || !isValidStatus(targetStatus)) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Invalid slug or status' }));
+        return;
+      }
+
       const dir = path.join(INITIATIVES_DIR, targetStatus);
       fs.mkdirSync(dir, { recursive: true });
 
@@ -451,6 +472,11 @@ function handleMoveInitiative(req: http.IncomingMessage, res: http.ServerRespons
       if (!slug || !from || !to) {
         res.writeHead(400, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'Missing slug, from, or to' }));
+        return;
+      }
+      if (!isSafePathSegment(slug) || !isValidStatus(from) || !isValidStatus(to)) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Invalid slug, from, or to status' }));
         return;
       }
 
