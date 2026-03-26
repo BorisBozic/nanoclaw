@@ -13,10 +13,19 @@ import { getMessageHistory, getMessageHistoryAllIos, upsertDeviceToken } from '.
 import { runDailyNudge } from '../daily-nudge.js';
 import { sendPushToAll } from '../apns.js';
 import { getThisWeekEvents } from '../calendar-service.js';
+import {
+  createTask as createDevTask,
+  deleteTask as deleteDevTask,
+  listTasks as listDevTasks,
+  readTask as readDevTask,
+  updateTask as updateDevTask,
+  type DevTask,
+} from '../dev-tasks.js';
 
 const SIGMA_REPO = path.join(process.env.HOME || '/Users/fambot', 'Projects', 'Sigma');
 const INITIATIVES_DIR = path.join(SIGMA_REPO, 'initiatives');
 const IDEAS_NITS_FILE = path.join(SIGMA_REPO, 'ideas-and-nits.md');
+const TASKS_DIR = path.join(SIGMA_REPO, 'tasks');
 
 const STATUSES = ['doing', 'next', 'later', 'done', 'cancelled'] as const;
 
@@ -30,8 +39,9 @@ function isValidStatus(value: string): value is (typeof STATUSES)[number] {
   return (STATUSES as readonly string[]).includes(value);
 }
 
-// Module-level broadcast callback
+// Module-level broadcast callbacks
 let broadcastChange: ((fileType: string) => void) | null = null;
+let broadcastDevTasksChange: (() => void) | null = null;
 
 /**
  * Watch the initiatives folder tree and ideas-and-nits file for changes.
@@ -143,6 +153,41 @@ export function watchWorkFiles(
     if (debounceTimer) clearTimeout(debounceTimer);
     if (inDebounce) clearTimeout(inDebounce);
   };
+}
+
+/**
+ * Watch the tasks/ directory for changes and broadcast structured JSON updates.
+ * Separate from watchWorkFiles because tasks need a different payload shape.
+ */
+export function watchDevTasks(
+  onChanged: (tasks: DevTask[]) => void,
+): () => void {
+  broadcastDevTasksChange = () => {
+    onChanged(listDevTasks());
+  };
+
+  let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+
+  try {
+    fs.mkdirSync(TASKS_DIR, { recursive: true });
+    const watcher = fs.watch(TASKS_DIR, () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        onChanged(listDevTasks());
+        logger.info('Tasks directory changed, broadcasting update');
+      }, 500);
+    });
+
+    logger.info('Watching tasks directory');
+
+    return () => {
+      watcher.close();
+      if (debounceTimer) clearTimeout(debounceTimer);
+    };
+  } catch {
+    logger.warn('Could not watch tasks directory');
+    return () => {};
+  }
 }
 
 // MARK: - Initiatives folder scanner
@@ -337,6 +382,41 @@ export function handleDataApi(
   // Test push endpoint: POST /api/push/test
   if (req.method === 'POST' && url === '/api/push/test') {
     authGuard(req, res, token, () => handleTestPush(req, res));
+    return true;
+  }
+
+  // --- DevTask endpoints ---
+
+  // List tasks: GET /api/dev-tasks?status=open
+  if (req.method === 'GET' && url.startsWith('/api/dev-tasks') && !url.includes('/api/dev-tasks/')) {
+    authGuard(req, res, token, () => handleListDevTasks(req, res));
+    return true;
+  }
+
+  // Get single task: GET /api/dev-tasks/:id
+  const getTaskMatch = req.method === 'GET' && url.match(/^\/api\/dev-tasks\/(\d+)$/);
+  if (getTaskMatch) {
+    authGuard(req, res, token, () => handleGetDevTask(res, parseInt(getTaskMatch[1], 10)));
+    return true;
+  }
+
+  // Create task: POST /api/dev-tasks
+  if (req.method === 'POST' && url === '/api/dev-tasks') {
+    authGuard(req, res, token, () => handleCreateDevTask(req, res));
+    return true;
+  }
+
+  // Update task: PUT /api/dev-tasks/:id
+  const putTaskMatch = req.method === 'PUT' && url.match(/^\/api\/dev-tasks\/(\d+)$/);
+  if (putTaskMatch) {
+    authGuard(req, res, token, () => handleUpdateDevTask(req, res, parseInt(putTaskMatch[1], 10)));
+    return true;
+  }
+
+  // Delete task: DELETE /api/dev-tasks/:id
+  const deleteTaskMatch = req.method === 'DELETE' && url.match(/^\/api\/dev-tasks\/(\d+)$/);
+  if (deleteTaskMatch) {
+    authGuard(req, res, token, () => handleDeleteDevTask(res, parseInt(deleteTaskMatch[1], 10)));
     return true;
   }
 
@@ -656,6 +736,124 @@ function handleGetFile(res: http.ServerResponse, filePath: string): void {
     logger.error({ err, filePath }, 'Failed to read file');
     res.writeHead(500, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ error: 'Failed to read file' }));
+  }
+}
+
+// MARK: - DevTask handlers
+
+function handleListDevTasks(req: http.IncomingMessage, res: http.ServerResponse): void {
+  try {
+    const url = new URL(req.url || '', 'http://localhost');
+    const status = url.searchParams.get('status') || undefined;
+    const filter = status ? { status: status as DevTask['status'] } : undefined;
+    const tasks = listDevTasks(filter);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ tasks }));
+  } catch (err) {
+    logger.error({ err }, 'Failed to list dev tasks');
+    res.writeHead(500, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'Failed to list tasks' }));
+  }
+}
+
+function handleGetDevTask(res: http.ServerResponse, id: number): void {
+  try {
+    const task = readDevTask(id);
+    if (!task) {
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: `Task ${id} not found` }));
+      return;
+    }
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(task));
+  } catch (err) {
+    logger.error({ err, taskId: id }, 'Failed to get dev task');
+    res.writeHead(500, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'Failed to get task' }));
+  }
+}
+
+function handleCreateDevTask(req: http.IncomingMessage, res: http.ServerResponse): void {
+  let body = '';
+  req.on('data', (chunk) => { body += chunk; });
+  req.on('end', () => {
+    try {
+      const { title, description } = JSON.parse(body);
+      if (!title) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Missing title' }));
+        return;
+      }
+
+      const task = createDevTask({
+        title,
+        description: description || undefined,
+        source: 'fambot',
+      });
+
+      if (broadcastDevTasksChange) broadcastDevTasksChange();
+
+      res.writeHead(201, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(task));
+    } catch (err) {
+      logger.error({ err }, 'Failed to create dev task');
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Failed to create task' }));
+    }
+  });
+}
+
+function handleUpdateDevTask(
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+  id: number,
+): void {
+  let body = '';
+  req.on('data', (chunk) => { body += chunk; });
+  req.on('end', () => {
+    try {
+      const updates = JSON.parse(body);
+      const task = updateDevTask(id, updates);
+
+      if (broadcastDevTasksChange) broadcastDevTasksChange();
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(task));
+    } catch (err: any) {
+      if (err.message?.includes('not found')) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: err.message }));
+        return;
+      }
+      if (err.message?.includes('Invalid status transition')) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: err.message }));
+        return;
+      }
+      logger.error({ err, taskId: id }, 'Failed to update dev task');
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Failed to update task' }));
+    }
+  });
+}
+
+function handleDeleteDevTask(res: http.ServerResponse, id: number): void {
+  try {
+    const deleted = deleteDevTask(id);
+    if (!deleted) {
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: `Task ${id} not found` }));
+      return;
+    }
+
+    if (broadcastDevTasksChange) broadcastDevTasksChange();
+
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ status: 'deleted' }));
+  } catch (err) {
+    logger.error({ err, taskId: id }, 'Failed to delete dev task');
+    res.writeHead(500, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'Failed to delete task' }));
   }
 }
 

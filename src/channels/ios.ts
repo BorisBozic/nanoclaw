@@ -11,7 +11,7 @@ import {
   OnInboundMessage,
   RegisteredGroup,
 } from '../types.js';
-import { handleDataApi, watchWorkFiles } from './ios-data-api.js';
+import { handleDataApi, watchDevTasks, watchWorkFiles } from './ios-data-api.js';
 
 // Use dynamic import for ws since it's an ESM/CJS package
 let WebSocketServer: any;
@@ -40,6 +40,7 @@ export class IosChannel implements Channel {
   private token: string;
   private opts: IosChannelOpts;
   private stopTasksWatcher: (() => void) | null = null;
+  private stopDevTasksWatcher: (() => void) | null = null;
 
   constructor(port: number, token: string, opts: IosChannelOpts) {
     this.port = port;
@@ -65,6 +66,11 @@ export class IosChannel implements Channel {
     // Watch initiatives and ideas-and-nits files, push changes to all clients
     this.stopTasksWatcher = watchWorkFiles((content, fileType) => {
       this.broadcastToAll({ type: 'tasks_updated', content, fileType });
+    });
+
+    // Watch dev-tasks directory, broadcast structured JSON
+    this.stopDevTasksWatcher = watchDevTasks((tasks) => {
+      this.broadcastToAll({ type: 'dev_tasks_updated', tasks });
     });
 
     return new Promise<void>((resolve) => {
@@ -298,6 +304,10 @@ export class IosChannel implements Channel {
     if (this.stopTasksWatcher) {
       this.stopTasksWatcher();
       this.stopTasksWatcher = null;
+    }
+    if (this.stopDevTasksWatcher) {
+      this.stopDevTasksWatcher();
+      this.stopDevTasksWatcher = null;
     }
 
     for (const client of this.clients.values()) {
