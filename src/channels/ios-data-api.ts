@@ -821,9 +821,12 @@ function handleUpdateDevTask(
   req.on('end', () => {
     try {
       const raw = JSON.parse(body);
-      // Runtime allowlist — TypeScript Omit is erased at runtime
-      const { title, description, status, pr_url, branch, session_notes } = raw;
-      const task = updateDevTask(id, { title, description, status, pr_url, branch, session_notes });
+      // Runtime allowlist — strip disallowed fields and undefined values
+      const allowed: Record<string, unknown> = {};
+      for (const key of ['title', 'description', 'status', 'pr_url', 'branch', 'session_notes']) {
+        if (raw[key] !== undefined) allowed[key] = raw[key];
+      }
+      const task = updateDevTask(id, allowed);
 
       if (broadcastDevTasksChange) broadcastDevTasksChange();
 
