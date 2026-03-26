@@ -55,6 +55,19 @@ Keep messages clean and readable for WhatsApp.
 
 ---
 
+## Dev Tasks
+
+You can create and manage dev tasks for the Sigma project. Tasks are stored as markdown files in the `tasks/` directory at the repo root.
+
+**To create a task**, write an IPC file:
+```json
+{ "type": "create_dev_task", "title": "Fix the login bug", "description": "Optional details", "targetJid": "<chat jid>", "dispatch": false }
+```
+
+Set `"dispatch": true` to immediately dispatch the task to a headless Claude Code session.
+
+Use your judgment: if the request is small and clear, create + dispatch. If ambiguous, create it as open and let Boris decide.
+
 ## Admin Context
 
 This is the **main channel**, which has elevated privileges.

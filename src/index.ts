@@ -60,6 +60,7 @@ import {
 } from './sender-allowlist.js';
 import http from 'http';
 
+import { recoverTasksOnStartup } from './dev-tasks.js';
 import { startSchedulerLoop } from './task-scheduler.js';
 import { startDailyNudgeCron } from './daily-nudge.js';
 import { startICloudPolling } from './icloud-calendar.js';
@@ -503,6 +504,9 @@ async function main(): Promise<void> {
   logger.info('Database initialized');
   loadState();
   restoreRemoteControl();
+  recoverTasksOnStartup().catch((err) =>
+    logger.error({ err }, 'Failed to recover dev tasks on startup'),
+  );
 
   // Start credential proxy (containers route API calls through this)
   const proxyServer = await startCredentialProxy(

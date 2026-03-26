@@ -16,8 +16,7 @@ import { getThisWeekEvents } from '../calendar-service.js';
 import {
   createTask as createDevTask,
   deleteTask as deleteDevTask,
-  dispatchTask as dispatchDevTask,
-  getActiveSessions,
+  dispatchAndRun,
   listTasks as listDevTasks,
   readTask as readDevTask,
   updateTask as updateDevTask,
@@ -821,8 +820,10 @@ function handleUpdateDevTask(
   req.on('data', (chunk) => { body += chunk; });
   req.on('end', () => {
     try {
-      const updates = JSON.parse(body);
-      const task = updateDevTask(id, updates);
+      const raw = JSON.parse(body);
+      // Runtime allowlist — TypeScript Omit is erased at runtime
+      const { title, description, status, pr_url, branch, session_notes } = raw;
+      const task = updateDevTask(id, { title, description, status, pr_url, branch, session_notes });
 
       if (broadcastDevTasksChange) broadcastDevTasksChange();
 
@@ -866,9 +867,16 @@ function handleDeleteDevTask(res: http.ServerResponse, id: number): void {
   }
 }
 
-function handleDispatchDevTask(res: http.ServerResponse, id: number): void {
+async function handleDispatchDevTask(res: http.ServerResponse, id: number): Promise<void> {
   try {
-    const { task } = dispatchDevTask(id);
+    const task = await dispatchAndRun(id, {
+      onProgress: () => {
+        if (broadcastDevTasksChange) broadcastDevTasksChange();
+      },
+      onComplete: () => {
+        if (broadcastDevTasksChange) broadcastDevTasksChange();
+      },
+    });
 
     if (broadcastDevTasksChange) broadcastDevTasksChange();
 

@@ -68,19 +68,17 @@ const VALID_TRANSITIONS: Record<DevTaskStatus, DevTaskStatus[]> = {
 };
 
 /**
- * Check if a status transition is valid. Returns the new status if valid,
- * throws if invalid.
+ * Validate a status transition. Throws if invalid.
  */
 export function transitionStatus(
   current: DevTaskStatus,
   next: DevTaskStatus,
-): DevTaskStatus {
+): void {
   if (!VALID_TRANSITIONS[current].includes(next)) {
     throw new Error(
       `Invalid status transition: ${current} → ${next}. Allowed: ${VALID_TRANSITIONS[current].join(', ')}`,
     );
   }
-  return next;
 }
 
 // --- ID allocation ---

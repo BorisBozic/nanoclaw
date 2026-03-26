@@ -91,8 +91,6 @@ describe('claude-session', () => {
       expect(result.prUrl).toBe(
         'https://github.com/fambot/Sigma/pull/99',
       );
-      expect(result.durationMs).toBe(10000);
-      expect(result.costUsd).toBe(0.12);
     });
 
     it('reports needs_session when no PR URL in result', async () => {

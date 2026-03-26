@@ -68,37 +68,37 @@ describe('dev-tasks', () => {
 
   describe('transitionStatus', () => {
     it('allows open → working', () => {
-      expect(transitionStatus('open', 'working')).toBe('working');
+      expect(() => transitionStatus('open', 'working')).not.toThrow();
     });
 
     it('allows open → done', () => {
-      expect(transitionStatus('open', 'done')).toBe('done');
+      expect(() => transitionStatus('open', 'done')).not.toThrow();
     });
 
     it('allows working → pr_ready', () => {
-      expect(transitionStatus('working', 'pr_ready')).toBe('pr_ready');
+      expect(() => transitionStatus('working', 'pr_ready')).not.toThrow();
     });
 
     it('allows working → needs_session', () => {
-      expect(transitionStatus('working', 'needs_session')).toBe(
-        'needs_session',
-      );
+      expect(() =>
+        transitionStatus('working', 'needs_session'),
+      ).not.toThrow();
     });
 
     it('allows working → open (reset)', () => {
-      expect(transitionStatus('working', 'open')).toBe('open');
+      expect(() => transitionStatus('working', 'open')).not.toThrow();
     });
 
     it('allows pr_ready → done', () => {
-      expect(transitionStatus('pr_ready', 'done')).toBe('done');
+      expect(() => transitionStatus('pr_ready', 'done')).not.toThrow();
     });
 
     it('allows needs_session → working', () => {
-      expect(transitionStatus('needs_session', 'working')).toBe('working');
+      expect(() => transitionStatus('needs_session', 'working')).not.toThrow();
     });
 
     it('allows done → open (reopen)', () => {
-      expect(transitionStatus('done', 'open')).toBe('open');
+      expect(() => transitionStatus('done', 'open')).not.toThrow();
     });
 
     it('rejects open → pr_ready', () => {
